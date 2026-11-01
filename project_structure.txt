@@ -1,0 +1,123 @@
+Folder PATH listing for volume Data
+Volume serial number is EAEC-C3DC
+F:.
+|   .gitignore
+|   CycloSense_Model_Training_Report (1).md
+|   CycloSense_Revised_Detailed_Project_Report_v2 (1).md
+|   evaluate.bat
+|   evaluate.py
+|   project_structure.txt
+|   README.md
+|   test_all.bat
+|   test_all.py
+|   
++---backend
+|   |   .env
+|   |   .env.example
+|   |   requirements.txt
+|   |   run.py
+|   |   
+|   +---app
+|   |   |   __init__.py
+|   |   |   
+|   |   +---models
+|   |   |       __init__.py
+|   |   |       
+|   |   +---routes
+|   |   |   |   ai.py
+|   |   |   |   map.py
+|   |   |   |   predict.py
+|   |   |   |   __init__.py
+|   |   |   |   
+|   |   |   \---__pycache__
+|   |   |           ai.cpython-311.pyc
+|   |   |           map.cpython-311.pyc
+|   |   |           predict.cpython-311.pyc
+|   |   |           __init__.cpython-311.pyc
+|   |   |           
+|   |   +---services
+|   |   |   |   model_loader.py
+|   |   |   |   __init__.py
+|   |   |   |   
+|   |   |   \---__pycache__
+|   |   |           model_loader.cpython-311.pyc
+|   |   |           __init__.cpython-311.pyc
+|   |   |           
+|   |   +---static
+|   |   |   \---uploads
+|   |   |           .gitkeep
+|   |   |           
+|   |   +---utils
+|   |   |   |   image_utils.py
+|   |   |   |   __init__.py
+|   |   |   |   
+|   |   |   \---__pycache__
+|   |   |           image_utils.cpython-311.pyc
+|   |   |           __init__.cpython-311.pyc
+|   |   |           
+|   |   \---__pycache__
+|   |           __init__.cpython-311.pyc
+|   |           
+|   +---tests
+|   |       test_api.py
+|   |       
+|   \---weights
+|           model1_detection.pt
+|           model2_classification.pt
+|           model3_forecasting.pt
+|           model3_scaler.pkl
+|           
++---docs
++---frontend
+|   +---css
+|   |       style.css
+|   |       
+|   +---images
+|   +---js
+|   |       main.js
+|   |       
+|   \---pages
+|           index.html
+|           
++---ml
+|   +---data
+|   |   +---processed
+|   |   |       .gitkeep
+|   |   |       
+|   |   \---raw
+|   |       |   .gitkeep
+|   |       |   
+|   |       +---classification
+|   |       +---detection
+|   |       \---forecasting
+|   +---models
+|   |   +---model1_detection
+|   |   |   +---notebooks
+|   |   |   \---weights
+|   |   +---model2_classification
+|   |   |   +---notebooks
+|   |   |   \---weights
+|   |   \---model3_forecasting
+|   |       +---notebooks
+|   |       \---weights
+|   +---notebooks
+|   \---src
+|       +---evaluation
+|       |   |   evaluate_models.py
+|       |   |   
+|       |   \---__pycache__
+|       |           evaluate_models.cpython-311.pyc
+|       |           
+|       +---preprocessing
+|       \---training
++---outputs
+|   +---logs
+|   |       .gitkeep
+|   |       
+|   \---predictions
+|           .gitkeep
+|           
+\---reports
+    \---figures
+            .gitkeep
+            

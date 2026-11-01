@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CycloSense — Cyclone Intelligence Dashboard</title>
+  <meta name="description" content="AI-powered tropical cyclone detection, classification, and forecasting system for the North Indian Ocean. SIH 2026.">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+  <!-- Google Fonts: Inter & JetBrains Mono for clean, precise modern UI -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Bootstrap Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+
+  <!-- Dashboard styles -->
+  <link rel="stylesheet" href="../css/style.css">
+
+  <!-- Markdown parser for AI responses -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ══════════════════════════════════════════════
+       HEADER
+  ══════════════════════════════════════════════ -->
+  <header class="header">
+    <a href="landing.html" class="back-home-link" title="Back to Home"><i class="bi bi-hurricane"></i></a>
+    <div class="logo">
+      CycloSense
+    </div>
+    <span class="header-sub">Cyclone Intelligence Platform · SIH 2026</span>
+    <div class="spacer"></div>
+    <a href="landing.html" class="btn-home-nav" title="Return to Landing Page">
+      <i class="bi bi-house-door"></i> Home
+    </a>
+    <button class="btn-room-scan" onclick="window.roomScanner.open()" title="Scan room with camera for cyclone hazards">
+      <i class="bi bi-camera-fill"></i> AR Room Scanner
+    </button>
+    <button class="btn-shelter-nav" onclick="window.shelterFinder.locateAndFind()" title="Find Nearest Government Cyclone Shelters">
+      <i class="bi bi-shield-shaded"></i> Safe Shelters
+    </button>
+    <button class="btn-ai-header" id="open-ai-btn" onclick="openAiModal()">
+      Ask Cyclone AI
+    </button>
+    <div id="api-status" class="api-badge check">
+      <div class="dot"></div>
+      Connecting…
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════
+       LEFT SIDEBAR
+  ══════════════════════════════════════════════ -->
+  <aside class="sidebar">
+
+    <!-- Image upload -->
+    <div class="card" style="position:relative;">
+      <div class="card-title">Satellite Image</div>
+
+      <!-- Ocean Basin Selector -->
+      <div style="margin-bottom:10px;">
+        <div style="font-size:9px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted);margin-bottom:4px;">
+          Ocean Basin / Region
+        </div>
+        <select id="img-basin" style="width:100%;background:rgba(0,0,0,.45);border:1px solid var(--border);
+                border-radius:var(--radius-sm);color:var(--text-primary);font-size:11px;
+                padding:6px 8px;outline:none;cursor:pointer;font-family:inherit;">
+          <option value="bay_of_bengal" selected>Bay of Bengal (East Coast / Odisha / AP)</option>
+          <option value="arabian_sea">Arabian Sea (West Coast / Gujarat / Maha)</option>
+        </select>
+      </div>
+
+      <div class="upload-zone" id="upload-zone">
+        <input type="file" id="img-input" accept="image/*">
+        <div class="u-icon" style="font-size:13px;font-weight:600;color:var(--accent-cyan);letter-spacing:1px;text-transform:uppercase;">[ Upload Image ]</div>
+        <div class="u-text">Drop image or click to upload</div>
+        <div class="u-sub">JPEG / PNG · 640 × 640 recommended</div>
+      </div>
+
+      <img id="img-preview" alt="Uploaded satellite image">
+
+      <!-- Detection loader -->
+      <div class="overlay-loader" id="det-loader">
+        <div class="spinner"></div>
+        <div class="spin-lbl">Running Detection…</div>
+      </div>
+    </div>
+
+    <!-- Detection result -->
+    <div class="card">
+      <div class="card-title">Detection — Model 1 (YOLO)</div>
+      <div id="det-result">
+        <div class="empty">
+          Upload a satellite image to detect cyclones
+        </div>
+      </div>
+    </div>
+
+    <!-- Classification result -->
+    <div class="card">
+      <div class="card-title">Classification — Model 2 (EfficientNet)</div>
+      <div id="cls-result">
+        <div class="empty">
+          Awaiting detection result
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ══════════════════════════════════════════════
+       MAP  (centre)
+  ══════════════════════════════════════════════ -->
+  <main class="map-wrap">
+    <div id="map"></div>
+    <div class="map-pill" id="map-pill">North Indian Ocean — CycloSense</div>
+
+    <!-- City Search & Proximity Bar -->
+    <div class="city-search-bar" id="city-search-bar">
+      <div class="search-input-wrap">
+        <span class="search-icon" style="font-size:11px;color:var(--text-muted);font-weight:bold;">Find:</span>
+        <input type="text" id="city-search-input" placeholder="Check city proximity (e.g. Puri, Chennai, Mumbai...)" autocomplete="off">
+        <button class="btn-locate-me" id="btn-locate-me" title="Use current GPS location" onclick="locateUserGps()">GPS</button>
+      </div>
+      <!-- Suggestions dropdown -->
+      <div class="city-suggestions" id="city-suggestions" style="display:none;"></div>
+    </div>
+
+    <!-- Quick Map Shelter Radar Trigger -->
+    <button class="btn-shelter-map-hud" onclick="window.shelterFinder.locateAndFind()" title="Locate nearest safe cyclone shelter">
+      <i class="bi bi-shield-plus"></i> Safe Shelters
+    </button>
+
+    <!-- Floating Proximity Warning Card -->
+    <div class="proximity-card" id="proximity-card" style="display:none;">
+      <div class="prox-header">
+        <div class="prox-title">
+          <span class="prox-dot" id="prox-dot"></span>
+          <span id="prox-city-name">Location Alert</span>
+        </div>
+        <button class="prox-close" onclick="closeProximityCard()" title="Close">&times;</button>
+      </div>
+      <div class="prox-body">
+        <div class="prox-dist-row">
+          <span class="prox-dist-val" id="prox-dist-val">-- km</span>
+          <span class="prox-hazard-badge" id="prox-hazard-badge">CALCULATING</span>
+        </div>
+        <div class="prox-meta" id="prox-meta">
+          Closest approach to projected cyclone path
+        </div>
+        <div class="prox-actions">
+          <button class="btn-prox-ai" onclick="askAiAboutCity()">Ask AI City Advisory</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Floating Shelter Radar Drawer -->
+    <div class="shelter-radar-drawer" id="shelter-radar-drawer" style="display:none;">
+      <div class="shelter-drawer-header">
+        <div class="shelter-drawer-title">
+          <span class="shelter-radar-dot"></span>
+          <span>Nearest Safe Cyclone Shelter</span>
+        </div>
+        <div class="drawer-header-actions">
+          <button class="btn-drawer-voice" onclick="window.shelterFinder.speakShelterAdvisory()" title="Listen to Voice Directions">
+            <i class="bi bi-volume-up-fill"></i>
+          </button>
+          <button class="shelter-drawer-close" onclick="window.shelterFinder.closeDrawer()" title="Close">&times;</button>
+        </div>
+      </div>
+
+      <div class="shelter-drawer-body">
+        <div class="nearest-shelter-spotlight">
+          <div class="spotlight-top">
+            <h5 id="nearest-shelter-name">Puri Model Multi-Purpose Cyclone Shelter (ODRRF-1)</h5>
+            <div class="spotlight-dist" id="nearest-shelter-dist">1.1 km</div>
+          </div>
+          <div class="spotlight-times" id="nearest-shelter-times">
+            ~<strong>3 mins</strong> drive &middot; ~<strong>13 mins</strong> walk
+          </div>
+          <div class="spotlight-meta">
+            <div class="meta-chip elevation" id="nearest-shelter-elev">
+              <i class="bi bi-arrow-up-right-circle-fill"></i> +16.5m MSL (Storm Surge Safe)
+            </div>
+            <div class="meta-chip capacity" id="nearest-shelter-cap">
+              <i class="bi bi-people-fill"></i> 1,800 Occupants
+            </div>
+          </div>
+          <div class="spotlight-facs" id="nearest-shelter-facs">
+            <span class="shelter-pill">Backup Solar</span>
+            <span class="shelter-pill">RO Water</span>
+            <span class="shelter-pill">First Aid</span>
+          </div>
+
+          <div class="spotlight-actions">
+            <button class="btn-shelter-action gmaps" id="btn-shelter-nav-gmaps">
+              <i class="bi bi-map-fill"></i> Turn-by-Turn Directions
+            </button>
+            <button class="btn-shelter-action helpline" id="btn-shelter-call">
+              <i class="bi bi-telephone-fill"></i> Call Helpline (1077)
+            </button>
+          </div>
+        </div>
+
+        <div class="other-shelters-section">
+          <div class="other-shelters-lbl">Other Nearby Safe Havens:</div>
+          <div class="other-shelters-list" id="other-shelters-list">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ══════════════════════════════════════════════
+       RIGHT SIDEBAR
+  ══════════════════════════════════════════════ -->
+  <aside class="sidebar sidebar-right">
+
+    <!-- Track input -->
+    <div class="card">
+      <div class="card-title">Track History — 8 Points (3-hr intervals)</div>
+
+      <!-- Preset selector -->
+      <div style="margin-bottom:8px;">
+        <div style="font-size:9px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted);margin-bottom:5px;">
+          Load Real Cyclone (IBTrACS)
+        </div>
+        <select id="cyclone-preset" onchange="loadPreset(this.value)"
+          style="width:100%;background:rgba(0,0,0,.4);border:1px solid var(--border);
+                 border-radius:var(--radius-sm);color:var(--text-secondary);
+                 font-size:11px;padding:7px 9px;outline:none;cursor:pointer;
+                 font-family:inherit;transition:border-color .2s;">
+          <option value="">— Select a cyclone —</option>
+          <option value="fani">Cyclone Fani (2019) — VSCS, Odisha landfall</option>
+          <option value="amphan">Cyclone Amphan (2020) — VSCS, West Bengal landfall</option>
+          <option value="tauktae">Cyclone Tauktae (2021) — VSCS, Gujarat landfall</option>
+          <option value="biparjoy">Cyclone Biparjoy (2023) — VSCS, Gujarat landfall</option>
+          <option value="demo">Demo Track (synthetic)</option>
+        </select>
+      </div>
+
+      <div style="font-size:9px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted);margin-bottom:5px;">
+        Or paste custom JSON (8 points)
+      </div>
+      <textarea
+        class="track-ta"
+        id="track-input"
+        placeholder='[{"lat":10.2,"lon":80.1,"wind_speed":65}, ...]  ← 8 points, oldest first, 3-hr apart'
+      ></textarea>
+
+      <div class="btn-group">
+        <button class="btn btn-primary" id="fcst-btn" onclick="runForecast()">
+          Run Forecast
+        </button>
+        <button class="btn btn-ghost" onclick="clearAll()">Clear Map</button>
+      </div>
+    </div>
+
+    <!-- Forecast table -->
+    <div class="card">
+      <div class="card-title">Track Forecast — Model 3 (LSTM)</div>
+      <div id="fcst-result">
+        <div class="empty">
+          Run forecast to see track predictions
+        </div>
+      </div>
+    </div>
+
+    <!-- Intensity chart -->
+    <div class="card">
+      <div class="card-title">Intensity Forecast</div>
+      <div id="intensity-chart"></div>
+      <div id="intensity-empty" class="empty">
+        Awaiting forecast
+      </div>
+    </div>
+
+    <!-- Risk summary -->
+    <div class="card">
+      <div class="card-title">Risk Summary</div>
+      <div id="risk-result">
+        <div class="empty">
+          No active forecast
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Action Planner Card -->
+    <div class="card ai-card-highlight">
+      <div class="card-title">
+        Ask Cyclone AI
+        <span class="ai-badge-pill">Groq LLaMA-3.3</span>
+      </div>
+      <div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;line-height:1.4;">
+        Instant role-specific evacuation, marine, and emergency action plans grounded in live telemetry.
+      </div>
+      <button class="btn btn-ai-action" onclick="openAiModal()">
+        Open Decision Assistant
+      </button>
+    </div>
+
+    <!-- AR Room Hazard Scanner Card -->
+    <div class="card ar-card-highlight">
+      <div class="card-title">
+        <i class="bi bi-camera-video"></i> AR Room Safety Scanner
+        <span class="ar-badge-pill">Camera AR</span>
+      </div>
+      <div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;line-height:1.4;">
+        Scan your room using device camera to detect hazardous glass windows and pinpoint reinforced shelter zones.
+      </div>
+      <button class="btn btn-ar-action" onclick="window.roomScanner.open()">
+        <i class="bi bi-view-finder"></i> Launch Room Scanner
+      </button>
+    </div>
+
+  </aside>
+
+</div><!-- /.app -->
+
+<!-- ══════════════════════════════════════════════
+     ASK CYCLONE AI MODAL / DRAWER
+══════════════════════════════════════════════ -->
+<div class="ai-modal-overlay" id="ai-modal" onclick="if(event.target===this) closeAiModal()">
+  <div class="ai-modal">
+    <!-- Header -->
+    <div class="ai-modal-header">
+      <div>
+        <div class="ai-modal-title">
+          CycloSense AI Action Planner
+          <span class="ai-badge-pill">Groq LLaMA-3.3-70B</span>
+        </div>
+        <div class="ai-modal-sub">Decision-support and preparedness assistant grounded in live telemetry</div>
+      </div>
+      <div class="ai-modal-actions">
+        <button class="btn-icon-close" onclick="closeAiModal()" title="Close">&times;</button>
+      </div>
+    </div>
+
+    <!-- Telemetry Bar -->
+    <div class="ai-telemetry-bar" id="ai-telemetry-bar">
+      <div class="tele-chip">Category: <strong id="ai-tele-cat">Awaiting Data</strong></div>
+      <div class="tele-chip">Pos: <strong id="ai-tele-pos">—</strong></div>
+      <div class="tele-chip">Wind: <strong id="ai-tele-wind">—</strong></div>
+      <div class="tele-chip">Risk: <strong id="ai-tele-risk">—</strong></div>
+    </div>
+
+    <!-- Role Selector -->
+    <div class="ai-role-section">
+      <div class="ai-role-lbl">Select Your Perspective / Role:</div>
+      <div class="ai-role-pills" id="ai-role-pills">
+        <button class="role-pill active" data-role="resident" onclick="selectAiRole('resident')">Coastal Resident</button>
+        <button class="role-pill" data-role="fisherman" onclick="selectAiRole('fisherman')">Fisherman / Marine</button>
+        <button class="role-pill" data-role="port_operator" onclick="selectAiRole('port_operator')">Port Authority</button>
+        <button class="role-pill" data-role="disaster_official" onclick="selectAiRole('disaster_official')">Disaster Official</button>
+        <button class="role-pill" data-role="general" onclick="selectAiRole('general')">General Public</button>
+      </div>
+    </div>
+
+    <!-- Quick Action Prompt Chips -->
+    <div class="ai-quick-chips">
+      <button class="quick-chip" onclick="askQuickPrompt('Generate an immediate step-by-step emergency action plan for my role.')">Action Plan</button>
+      <button class="quick-chip" onclick="askQuickPrompt('What is the projected landfall window and expected wind impact timeline?')">Landfall Timeline</button>
+      <button class="quick-chip" onclick="askQuickPrompt('What are the specific evacuation, shelter, and marine safety protocols?')">Evacuation & Safety</button>
+      <button class="quick-chip" onclick="askQuickPrompt('What infrastructure and power supply precautions should be prioritized?')">Infrastructure Precautions</button>
+    </div>
+
+    <!-- Chat Body -->
+    <div class="ai-chat-body" id="ai-chat-body">
+      <!-- Welcome bubble -->
+      <div class="ai-bubble assistant">
+        <p><strong>Welcome to CycloSense Decision Assistant</strong></p>
+        <p>I am powered by <strong>Groq LLaMA-3.3</strong> and grounded in your live cyclone detection, EfficientNet category classification, and LSTM trajectory forecast. Select your role above or ask any question to generate an actionable preparedness plan.</p>
+      </div>
+    </div>
+
+    <!-- Input Bar -->
+    <form class="ai-input-bar" onsubmit="event.preventDefault(); submitAiMessage();">
+      <div class="ai-input-wrap">
+        <input type="text" id="ai-user-input" class="ai-input" placeholder="Ask about safety actions, wind timeline, landfall..." autocomplete="off">
+      </div>
+      <button type="submit" class="btn-ai-send" id="btn-ai-send">
+        Ask AI
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     CLEAN AR ROOM SCANNER MODAL
+══════════════════════════════════════════════ -->
+<div class="scanner-modal-overlay" id="scanner-modal" onclick="if(event.target===this) window.roomScanner.close()">
+  <div class="clean-scanner-container">
+    
+    <!-- Top Floating Header Bar -->
+    <div class="scanner-top-bar">
+      <div class="scanner-brand">
+        <i class="bi bi-camera-video-fill"></i>
+        <span>Room Scanner</span>
+      </div>
+
+      <!-- Real-Time Safety Score Pill -->
+      <div class="scanner-score-pill" id="clean-score-pill">
+        <span class="score-indicator" id="clean-score-dot"></span>
+        <span id="clean-score-text">Ready to Scan</span>
+      </div>
+
+      <!-- Header Action Controls -->
+      <div class="scanner-actions">
+        <button type="button" class="scanner-btn-icon" id="btn-cam-flip" onclick="window.roomScanner.flipCamera()" title="Switch Camera">
+          <i class="bi bi-arrow-repeat"></i>
+        </button>
+        <button type="button" class="scanner-btn-icon" id="btn-cam-close" onclick="window.roomScanner.close()" title="Close">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Clean Camera Viewfinder & Lightweight AR Overlay -->
+    <div class="scanner-viewport">
+      <video id="scanner-video" autoplay playsinline muted></video>
+      <canvas id="scanner-canvas"></canvas>
+
+      <!-- Clean Camera Guidance Message (Centered bottom of view) -->
+      <div class="scanner-guidance-pill" id="scanner-guidance-text">
+        Point camera at your room and tap Scan Room Safety
+      </div>
+    </div>
+
+    <!-- Bottom Controls & Action Bar -->
+    <div class="scanner-bottom-bar">
+      <button type="button" class="btn-clean-action btn-scan-main" id="btn-scan-trigger" onclick="window.roomScanner.scanNow()">
+        <i class="bi bi-view-finder"></i> Scan Room Safety
+      </button>
+
+      <button type="button" class="btn-clean-action btn-voice-play" id="btn-voice-trigger" onclick="window.roomScanner.speakGuidance()" title="Speak Guidance">
+        <i class="bi bi-volume-up-fill"></i>
+      </button>
+
+      <button type="button" class="btn-clean-action btn-info-toggle" id="btn-toggle-protocol" onclick="window.roomScanner.toggleProtocolSheet()" title="View Safety Details">
+        <i class="bi bi-shield-check"></i>
+      </button>
+    </div>
+
+    <!-- Slide-Up Safety Protocol Sheet (Slides up on tap) -->
+    <div class="scanner-protocol-sheet" id="scanner-protocol-sheet">
+      <div class="sheet-handle" onclick="window.roomScanner.toggleProtocolSheet()">
+        <div class="handle-bar"></div>
+      </div>
+      <div class="sheet-content">
+        <div class="sheet-header">
+          <h6><i class="bi bi-shield-fill-check text-teal"></i> NDMA Cyclone Safety Protocol</h6>
+          <button class="sheet-close" onclick="window.roomScanner.toggleProtocolSheet()">&times;</button>
+        </div>
+        <div id="ai-room-guidance" class="sheet-body">
+          <p style="font-size:12px;color:var(--text-secondary);margin:0;">
+            Point your camera at the room and tap <strong>Scan Room Safety</strong> to detect hazards, locate shelter spots, and generate customized survival directives.
+          </p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     SHELTER CITY PICKER MODAL (GPS FALLBACK)
+══════════════════════════════════════════════ -->
+<div class="city-picker-overlay" id="shelter-city-picker-modal" onclick="if(event.target===this) window.shelterFinder.closeCityPicker()">
+  <div class="city-picker-modal">
+    <div class="city-picker-header">
+      <div>
+        <div class="picker-title"><i class="bi bi-geo-alt-fill"></i> Select Coastal Location</div>
+        <div class="picker-sub" id="picker-msg">Select your coastal district to find nearby cyclone shelters:</div>
+      </div>
+      <button class="btn-icon-close" onclick="window.shelterFinder.closeCityPicker()">&times;</button>
+    </div>
+    <div class="city-picker-body" id="picker-city-list">
+      <!-- Populated dynamically -->
+    </div>
+  </div>
+</div>
+
+<!-- Leaflet -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- Plotly (lightweight bundle) -->
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+
+<!-- TensorFlow.js & COCO-SSD for Real-Time Client-Side Object & Surroundings Detection -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+
+<!-- Room Safety Scanner logic -->
+<script src="../js/room-scanner.js"></script>
+
+<!-- Emergency Shelter Finder logic -->
+<script src="../js/shelter-finder.js"></script>
+
+<!-- Dashboard logic -->
+<script src="../js/main.js"></script>
+
+</body>
+</html>
