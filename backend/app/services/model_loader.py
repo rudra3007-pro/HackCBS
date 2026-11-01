@@ -134,42 +134,79 @@ def _load_model3_and_scaler():
 # Public API
 # ──────────────────────────────────────────────────────────────────────────────
 
+import threading
+
+# ── Concurrency & Background Loading Controls ─────────────────────────────────
+_models_lock = threading.Lock()
+_models_loading = False
+_models_loaded = False
+
+
+def are_models_loaded() -> bool:
+    """Check if all models and the scaler are ready in memory."""
+    global _model1, _model2, _model3, _scaler
+    return (_model1 is not None) and (_model2 is not None) and (_model3 is not None) and (_scaler is not None)
+
+
 def load_all_models():
     """
-    Load all models at application startup.
-    Call this once from the Flask app factory (create_app).
-    Subsequent calls are no-ops — models are cached in module globals.
+    Load all models into memory. Thread-safe and idempotent.
     """
-    global _model1, _model2, _model3, _scaler
+    global _model1, _model2, _model3, _scaler, _models_loading, _models_loaded
 
-    if _model1 is None:
-        _model1 = _load_model1()
+    with _models_lock:
+        if are_models_loaded():
+            return
 
-    if _model2 is None:
-        _model2 = _load_model2()
+        _models_loading = True
+        try:
+            if _model1 is None:
+                _model1 = _load_model1()
 
-    if _model3 is None or _scaler is None:
-        _model3, _scaler = _load_model3_and_scaler()
+            if _model2 is None:
+                _model2 = _load_model2()
 
-    logger.info("All CycloSense models loaded and ready.")
+            if _model3 is None or _scaler is None:
+                _model3, _scaler = _load_model3_and_scaler()
+
+            _models_loaded = True
+            logger.info("All CycloSense models loaded and ready in memory.")
+        except Exception as e:
+            logger.exception("Failed to load models: %s", e)
+            raise
+        finally:
+            _models_loading = False
+
+
+def load_models_in_background():
+    """
+    Launch model loading in a background daemon thread.
+    Allows Gunicorn and Render health checks to pass instantly without worker timeouts.
+    """
+    thread = threading.Thread(target=load_all_models, daemon=True, name="CycloSense-ModelLoader")
+    thread.start()
+    return thread
 
 
 def get_model1() -> YOLO:
-    """Return the loaded YOLOv8 detection model."""
+    """Return the loaded YOLOv8 detection model (loads on demand if needed)."""
+    global _model1
     if _model1 is None:
-        raise RuntimeError("Models not loaded. Call load_all_models() first.")
+        load_all_models()
     return _model1
 
 
 def get_model2() -> torch.nn.Module:
-    """Return the loaded EfficientNet-B0 classification model."""
+    """Return the loaded EfficientNet-B0 classification model (loads on demand if needed)."""
+    global _model2
     if _model2 is None:
-        raise RuntimeError("Models not loaded. Call load_all_models() first.")
+        load_all_models()
     return _model2
 
 
 def get_model3():
-    """Return (lstm_model, scaler) tuple for forecasting."""
+    """Return (lstm_model, scaler) tuple for forecasting (loads on demand if needed)."""
+    global _model3, _scaler
     if _model3 is None or _scaler is None:
-        raise RuntimeError("Models not loaded. Call load_all_models() first.")
+        load_all_models()
     return _model3, _scaler

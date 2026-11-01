@@ -227,14 +227,16 @@ def _run_forecast(track_sequence: list):
 
 @predict_bp.get("/health")
 def health():
-    """Liveness check — confirms models are loaded. Pass ?test=true to also run dummy inference."""
+    """Liveness check — confirms service is responsive. Reports model loading status."""
     if request.args.get("test", "false").lower() in ("true", "1", "yes"):
         return test_models()
-    try:
-        get_model1(); get_model2(); get_model3()
-        return jsonify({"status": "ok", "models_loaded": True}), 200
-    except RuntimeError as e:
-        return jsonify({"status": "error", "message": str(e)}), 503
+    from app.services.model_loader import are_models_loaded
+    loaded = are_models_loaded()
+    return jsonify({
+        "status": "ok",
+        "service": "CycloSense Prediction API",
+        "models_loaded": loaded
+    }), 200
 
 
 @predict_bp.get("/test-models")

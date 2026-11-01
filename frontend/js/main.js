@@ -116,7 +116,8 @@ function initMap() {
 async function checkStatus() {
   const el = document.getElementById('api-status');
   try {
-    const r = await fetch(`${API}/api/predict/health`, { signal: AbortSignal.timeout(4000) });
+    const r = await fetch(`${API}/api/predict/health`, { signal: AbortSignal.timeout(6000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     if (d.models_loaded) {
       el.className = 'api-badge ok';
@@ -124,20 +125,29 @@ async function checkStatus() {
       el.title = 'Click to run live model self-test';
       el.style.cursor = 'pointer';
     } else {
-      setStatusError(el, 'Models not loaded');
+      el.className = 'api-badge check';
+      el.innerHTML = '<div class="dot"></div>Warming Up Models…';
+      el.title = 'Models are loading into memory (takes ~30s on cold start)';
+      el.style.cursor = 'wait';
+      // Poll again in 3 seconds until models are loaded
+      setTimeout(checkStatus, 3000);
     }
-  } catch {
-    setStatusError(el, 'Backend Offline');
+  } catch (err) {
+    setStatusError(el, 'Connecting…');
+    setTimeout(checkStatus, 5000);
   }
 
   // Allow clicking badge to test live inference on all 3 models
   if (!el._hasTestHandler) {
     el._hasTestHandler = true;
     el.addEventListener('click', async () => {
-      el.className = 'api-badge';
-      el.innerHTML = '<div class="dot" style="background:#f59e0b"></div>Testing models…';
+      el.className = 'api-badge check';
+      el.innerHTML = '<div class="dot"></div>Testing models…';
       try {
         const res = await fetch(`${API}/api/predict/test-models`);
+        if (!res.ok) {
+          throw new Error(`Server returned HTTP ${res.status}. If instance just booted, please allow 30 seconds for PyTorch weights to load.`);
+        }
         const data = await res.json();
         if (data.all_operational) {
           alert(`All 3 Models Operational!\n\n` +
@@ -148,7 +158,7 @@ async function checkStatus() {
           alert('Model test failed: ' + JSON.stringify(data.models, null, 2));
         }
       } catch (err) {
-        alert('Diagnostic error: ' + err.message);
+        alert('Diagnostic status: ' + err.message);
       } finally {
         checkStatus();
       }
@@ -197,6 +207,12 @@ async function handleImageFile(file) {
     fd1.append('image', file);
     fd1.append('basin', basin);
     const detRes  = await fetch(`${API}/api/predict/detect`, { method:'POST', body:fd1 });
+    if (!detRes.ok) {
+      const errTxt = await detRes.text();
+      let msg = `Detection server error (${detRes.status})`;
+      try { msg = JSON.parse(errTxt).error || msg; } catch {}
+      throw new Error(msg);
+    }
     const detData = await detRes.json();
     renderDetection(detData);
 
@@ -214,6 +230,12 @@ async function handleImageFile(file) {
     const fd2 = new FormData();
     fd2.append('image', file);
     const clsRes  = await fetch(`${API}/api/predict/classify`, { method:'POST', body:fd2 });
+    if (!clsRes.ok) {
+      const errTxt = await clsRes.text();
+      let msg = `Classification server error (${clsRes.status})`;
+      try { msg = JSON.parse(errTxt).error || msg; } catch {}
+      throw new Error(msg);
+    }
     const clsData = await clsRes.json();
     renderClassification(clsData);
 
@@ -237,7 +259,7 @@ async function handleImageFile(file) {
   } catch (err) {
     console.error(err);
     document.getElementById('det-result').innerHTML =
-      `<div class="empty" style="color:#ef4444">Pipeline failed<br><small>Is the backend running on port 5000?</small></div>`;
+      `<div class="empty" style="color:#ef4444">Pipeline failed<br><small>${err.message || 'Check model server connection'}</small></div>`;
   } finally {
     document.getElementById('det-loader').classList.remove('on');
     document.querySelector('.spin-lbl').textContent = 'Running Detection…';

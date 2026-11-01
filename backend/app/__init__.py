@@ -33,11 +33,10 @@ def create_app():
     # ── CORS (allow requests from any origin) ─────────────────────────────────
     CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-    # ── Load ML models (runs once; cached as module globals) ─────────────────
-    logger.info("Loading CycloSense models …")
-    from app.services.model_loader import load_all_models
-    load_all_models()
-    logger.info("All models ready.")
+    # ── Load ML models asynchronously in background thread ──────────────────
+    from app.services.model_loader import load_models_in_background
+    load_models_in_background()
+    logger.info("CycloSense background model loader initiated.")
 
     # ── Register Blueprints ───────────────────────────────────────────────────
     from app.routes.predict import predict_bp
@@ -84,6 +83,27 @@ def create_app():
     @app.get("/frontend/<path:filename>")
     def serve_frontend_generic(filename):
         return send_from_directory(frontend_dir, filename)
+
+    # ── Cron Job / Uptime Keepalive Routes ────────────────────────────────────
+    @app.get("/health")
+    @app.get("/healthz")
+    @app.get("/ping")
+    @app.get("/api/health")
+    @app.get("/api/cron/keepalive")
+    def cron_health():
+        """
+        Ultra-lightweight keepalive endpoint for cron jobs (e.g. cron-job.org, UptimeRobot).
+        Prevents Render free tier instances from sleeping without executing expensive operations.
+        """
+        import time
+        from app.services.model_loader import are_models_loaded
+        return jsonify({
+            "status": "healthy",
+            "service": "CycloSense",
+            "uptime_check": "ok",
+            "timestamp": time.time(),
+            "models_loaded": are_models_loaded()
+        }), 200
 
     # ── Root API Directory & Health ───────────────────────────────────────────
     @app.get("/api")
