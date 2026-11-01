@@ -119,18 +119,14 @@ async function checkStatus() {
     const r = await fetch(`${API}/api/predict/health`, { signal: AbortSignal.timeout(6000) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
-    if (d.models_loaded) {
+    if (d.status === 'ok') {
       el.className = 'api-badge ok';
-      el.innerHTML = '<div class="dot"></div>API Ready · All Models Loaded';
-      el.title = 'Click to run live model self-test';
+      el.innerHTML = '<div class="dot"></div>API Online · Models Ready';
+      el.title = 'CycloSense backend is online and models load on-demand. Click to run self-test.';
       el.style.cursor = 'pointer';
     } else {
-      el.className = 'api-badge check';
-      el.innerHTML = '<div class="dot"></div>Warming Up Models…';
-      el.title = 'Models are loading into memory (takes ~30s on cold start)';
-      el.style.cursor = 'wait';
-      // Poll again in 3 seconds until models are loaded
-      setTimeout(checkStatus, 3000);
+      setStatusError(el, 'Connecting…');
+      setTimeout(checkStatus, 4000);
     }
   } catch (err) {
     setStatusError(el, 'Connecting…');

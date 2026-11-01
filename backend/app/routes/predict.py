@@ -227,15 +227,16 @@ def _run_forecast(track_sequence: list):
 
 @predict_bp.get("/health")
 def health():
-    """Liveness check — confirms service is responsive. Reports model loading status."""
+    """Liveness check — confirms service is responsive. Reports model readiness."""
     if request.args.get("test", "false").lower() in ("true", "1", "yes"):
         return test_models()
-    from app.services.model_loader import are_models_loaded
-    loaded = are_models_loaded()
+    from app.services.model_loader import get_models_status
+    status = get_models_status()
     return jsonify({
         "status": "ok",
         "service": "CycloSense Prediction API",
-        "models_loaded": loaded
+        "models_status": status,
+        "ready": True
     }), 200
 
 

@@ -33,10 +33,8 @@ def create_app():
     # ── CORS (allow requests from any origin) ─────────────────────────────────
     CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-    # ── Load ML models asynchronously in background thread ──────────────────
-    from app.services.model_loader import load_models_in_background
-    load_models_in_background()
-    logger.info("CycloSense background model loader initiated.")
+    # ── Models configured for on-demand lazy loading (Render 512MB RAM safe) ──
+    logger.info("CycloSense models ready for on-demand lazy loading.")
 
     # ── Register Blueprints ───────────────────────────────────────────────────
     from app.routes.predict import predict_bp

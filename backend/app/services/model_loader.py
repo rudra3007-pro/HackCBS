@@ -5,12 +5,17 @@ Models are stored as module-level singletons so they are shared across requests.
 """
 
 import os
+import gc
 import pickle
 import logging
+import threading
 
 import torch
 import torchvision.models as tv_models
 from ultralytics import YOLO
+
+# Limit PyTorch to 1 thread to avoid memory spikes and CPU thrashing on 512MB RAM cloud hosts
+torch.set_num_threads(1)
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +40,15 @@ LSTM_NUM_LAYERS  = 2
 LSTM_OUTPUT_SIZE = 3    # predict (lat, lon, wind_speed)
 LSTM_SEQ_LEN     = 8   # 8 × 3-hour steps = 24 hours of history
 
-# ── Singleton holders ─────────────────────────────────────────────────────────
+# ── Singleton holders & Individual Locks ─────────────────────────────────────
 _model1 = None   # YOLOv8-nano  (ultralytics.YOLO)
 _model2 = None   # EfficientNet-B0, 3-class (torch.nn.Module, eval mode)
 _model3 = None   # 2-layer LSTM    (torch.nn.Module, eval mode)
 _scaler = None   # sklearn StandardScaler
+
+_lock1 = threading.Lock()
+_lock2 = threading.Lock()
+_lock3 = threading.Lock()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -65,148 +74,104 @@ class CycloneLSTM(torch.nn.Module):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Loader functions
+# Lazy, Memory-Efficient Loaders
 # ──────────────────────────────────────────────────────────────────────────────
-
-def _load_model1():
-    """Load YOLOv8-nano detection model."""
-    path = WEIGHTS["model1"]
-    logger.info("Loading Model 1 (YOLO detection) from %s", path)
-    model = YOLO(path)
-    logger.info("Model 1 loaded successfully.")
-    return model
-
-
-def _load_model2():
-    """Load EfficientNet-B0 3-class classification model (CS, D_DD, VSCS)."""
-    path = WEIGHTS["model2"]
-    logger.info("Loading Model 2 (EfficientNet 3-class classification) from %s", path)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Rebuild the exact architecture used during training
-    model = tv_models.efficientnet_b0(weights=None)
-    in_features = model.classifier[1].in_features
-    model.classifier = torch.nn.Sequential(
-        torch.nn.Dropout(p=0.4, inplace=True),
-        torch.nn.Linear(in_features, NUM_CLASSES),
-    )
-
-    state = torch.load(path, map_location=device, weights_only=True)
-    # Support both raw state-dict and wrapped checkpoint
-    if isinstance(state, dict) and "model_state_dict" in state:
-        state = state["model_state_dict"]
-    model.load_state_dict(state)
-    model.to(device)
-    model.eval()
-    logger.info("Model 2 loaded on %s — classes: %s", device, CLASSES)
-    return model
-
-
-def _load_model3_and_scaler():
-    """Load 2-layer LSTM forecasting model and its StandardScaler."""
-    m3_path  = WEIGHTS["model3"]
-    sc_path  = WEIGHTS["scaler"]
-    device   = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    logger.info("Loading Model 3 (LSTM forecasting) from %s", m3_path)
-    model = CycloneLSTM(
-        input_size=LSTM_INPUT_SIZE,
-        hidden_size=LSTM_HIDDEN_SIZE,
-        num_layers=LSTM_NUM_LAYERS,
-        output_size=LSTM_OUTPUT_SIZE,
-    )
-    state = torch.load(m3_path, map_location=device, weights_only=True)
-    if isinstance(state, dict) and "model_state_dict" in state:
-        state = state["model_state_dict"]
-    model.load_state_dict(state)
-    model.to(device)
-    model.eval()
-
-    logger.info("Loading scaler from %s", sc_path)
-    with open(sc_path, "rb") as f:
-        scaler = pickle.load(f)
-
-    logger.info("Model 3 + scaler loaded on %s.", device)
-    return model, scaler
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Public API
-# ──────────────────────────────────────────────────────────────────────────────
-
-import threading
-
-# ── Concurrency & Background Loading Controls ─────────────────────────────────
-_models_lock = threading.Lock()
-_models_loading = False
-_models_loaded = False
-
-
-def are_models_loaded() -> bool:
-    """Check if all models and the scaler are ready in memory."""
-    global _model1, _model2, _model3, _scaler
-    return (_model1 is not None) and (_model2 is not None) and (_model3 is not None) and (_scaler is not None)
-
-
-def load_all_models():
-    """
-    Load all models into memory. Thread-safe and idempotent.
-    """
-    global _model1, _model2, _model3, _scaler, _models_loading, _models_loaded
-
-    with _models_lock:
-        if are_models_loaded():
-            return
-
-        _models_loading = True
-        try:
-            if _model1 is None:
-                _model1 = _load_model1()
-
-            if _model2 is None:
-                _model2 = _load_model2()
-
-            if _model3 is None or _scaler is None:
-                _model3, _scaler = _load_model3_and_scaler()
-
-            _models_loaded = True
-            logger.info("All CycloSense models loaded and ready in memory.")
-        except Exception as e:
-            logger.exception("Failed to load models: %s", e)
-            raise
-        finally:
-            _models_loading = False
-
-
-def load_models_in_background():
-    """
-    Launch model loading in a background daemon thread.
-    Allows Gunicorn and Render health checks to pass instantly without worker timeouts.
-    """
-    thread = threading.Thread(target=load_all_models, daemon=True, name="CycloSense-ModelLoader")
-    thread.start()
-    return thread
-
 
 def get_model1() -> YOLO:
-    """Return the loaded YOLOv8 detection model (loads on demand if needed)."""
+    """Load and return YOLOv8 detection model on demand."""
     global _model1
     if _model1 is None:
-        load_all_models()
+        with _lock1:
+            if _model1 is None:
+                path = WEIGHTS["model1"]
+                logger.info("Loading Model 1 (YOLO detection) on-demand from %s", path)
+                _model1 = YOLO(path)
+                gc.collect()
+                logger.info("Model 1 ready in memory.")
     return _model1
 
 
 def get_model2() -> torch.nn.Module:
-    """Return the loaded EfficientNet-B0 classification model (loads on demand if needed)."""
+    """Load and return EfficientNet-B0 classification model on demand."""
     global _model2
     if _model2 is None:
-        load_all_models()
+        with _lock2:
+            if _model2 is None:
+                path = WEIGHTS["model2"]
+                logger.info("Loading Model 2 (EfficientNet) on-demand from %s", path)
+                device = torch.device("cpu")
+                model = tv_models.efficientnet_b0(weights=None)
+                in_features = model.classifier[1].in_features
+                model.classifier = torch.nn.Sequential(
+                    torch.nn.Dropout(p=0.4, inplace=True),
+                    torch.nn.Linear(in_features, NUM_CLASSES),
+                )
+                state = torch.load(path, map_location=device, weights_only=False)
+                if isinstance(state, dict) and "model_state_dict" in state:
+                    state = state["model_state_dict"]
+                model.load_state_dict(state)
+                model.to(device)
+                model.eval()
+                _model2 = model
+                gc.collect()
+                logger.info("Model 2 ready in memory.")
     return _model2
 
 
 def get_model3():
-    """Return (lstm_model, scaler) tuple for forecasting (loads on demand if needed)."""
+    """Load and return (lstm_model, scaler) tuple on demand."""
     global _model3, _scaler
     if _model3 is None or _scaler is None:
-        load_all_models()
+        with _lock3:
+            if _model3 is None or _scaler is None:
+                m3_path = WEIGHTS["model3"]
+                sc_path = WEIGHTS["scaler"]
+                logger.info("Loading Model 3 (LSTM) on-demand from %s", m3_path)
+                device = torch.device("cpu")
+                model = CycloneLSTM(
+                    input_size=LSTM_INPUT_SIZE,
+                    hidden_size=LSTM_HIDDEN_SIZE,
+                    num_layers=LSTM_NUM_LAYERS,
+                    output_size=LSTM_OUTPUT_SIZE,
+                )
+                state = torch.load(m3_path, map_location=device, weights_only=False)
+                if isinstance(state, dict) and "model_state_dict" in state:
+                    state = state["model_state_dict"]
+                model.load_state_dict(state)
+                model.to(device)
+                model.eval()
+
+                logger.info("Loading scaler from %s", sc_path)
+                with open(sc_path, "rb") as f:
+                    scaler = pickle.load(f)
+
+                _model3 = model
+                _scaler = scaler
+                gc.collect()
+                logger.info("Model 3 and scaler ready in memory.")
     return _model3, _scaler
+
+
+def get_models_status() -> dict:
+    """Check readiness of each individual model."""
+    return {
+        "model1_yolo": _model1 is not None,
+        "model2_classification": _model2 is not None,
+        "model3_forecasting": _model3 is not None,
+        "scaler": _scaler is not None,
+        "any_loaded": any([_model1 is not None, _model2 is not None, _model3 is not None]),
+        "all_loaded": all([_model1 is not None, _model2 is not None, _model3 is not None, _scaler is not None]),
+    }
+
+
+def are_models_loaded() -> bool:
+    """Return True if all models are loaded."""
+    return get_models_status()["all_loaded"]
+
+
+def load_all_models():
+    """Load all models (for diagnostics)."""
+    get_model1()
+    get_model2()
+    get_model3()
+    logger.info("All models loaded.")
