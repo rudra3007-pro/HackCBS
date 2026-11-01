@@ -547,6 +547,12 @@ async function runForecastWithTrack(track, category) {
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({track}),
     });
+    if (!fRes.ok) {
+      const errTxt = await fRes.text();
+      let msg = `Forecast failed (${fRes.status})`;
+      try { msg = JSON.parse(errTxt).error || msg; } catch {}
+      throw new Error(msg);
+    }
     const fData = await fRes.json();
     if (fData.error) throw new Error(fData.error);
 
@@ -566,6 +572,12 @@ async function runForecastWithTrack(track, category) {
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ current:{lat:cur.lat,lon:cur.lon}, forecast:fData.forecast, category:cat }),
     });
+    if (!gRes.ok) {
+      const errTxt = await gRes.text();
+      let msg = `Map track calculation failed (${gRes.status})`;
+      try { msg = JSON.parse(errTxt).error || msg; } catch {}
+      throw new Error(msg);
+    }
     const gData = await gRes.json();
 
     // ── Impact zones ──────────────────────────────────────────
@@ -574,6 +586,12 @@ async function runForecastWithTrack(track, category) {
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ forecast:fData.forecast, category:cat }),
     });
+    if (!iRes.ok) {
+      const errTxt = await iRes.text();
+      let msg = `Impact zone calculation failed (${iRes.status})`;
+      try { msg = JSON.parse(errTxt).error || msg; } catch {}
+      throw new Error(msg);
+    }
     const iData = await iRes.json();
 
     // ── Render ────────────────────────────────────────────────
