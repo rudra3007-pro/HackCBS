@@ -1077,7 +1077,7 @@ async function searchOnlineCity(query) {
   const sugBox = document.getElementById('city-suggestions');
   sugBox.style.display = 'none';
   try {
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${query}&limit=1`);
+    const res = await fetch(`${API}/api/map/geocode?q=${encodeURIComponent(query)}`);
     const data = await res.json();
     if (data && data.length > 0) {
       selectCity({

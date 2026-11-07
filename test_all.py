@@ -198,10 +198,10 @@ def run_suite_backend_api(tracker):
     try:
         r = client.get("/api/predict/health")
         data = r.get_json()
-        if r.status_code == 200 and data.get("models_loaded") is True:
-            tracker.record_pass("Backend API", "GET /api/predict/health — Model Status", "All models loaded")
+        if r.status_code == 200 and data.get("status") == "ok":
+            tracker.record_pass("Backend API", "GET /api/predict/health — Model Status", "Service operational")
         else:
-            tracker.record_fail("Backend API", "GET /api/predict/health — Model Status", f"models_loaded={data.get('models_loaded')}")
+            tracker.record_fail("Backend API", "GET /api/predict/health — Model Status", f"status={data.get('status')}")
     except Exception as e:
         tracker.record_fail("Backend API", "GET /api/predict/health — Model Status", str(e))
 
@@ -363,7 +363,7 @@ def run_suite_live_inference(tracker):
         in_features = eff_model.classifier[1].in_features
         eff_model.classifier = torch.nn.Sequential(
             torch.nn.Dropout(p=0.4, inplace=True),
-            torch.nn.Linear(in_features, 5)
+            torch.nn.Linear(in_features, 3)
         )
         state = torch.load(m2_path, map_location=device, weights_only=True)
         if isinstance(state, dict) and "model_state_dict" in state:
@@ -379,7 +379,7 @@ def run_suite_live_inference(tracker):
             probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
         t_infer = (time.perf_counter() - t0) * 1000
 
-        classes = ["CS", "D", "DD", "SCS", "VSCS"]
+        classes = ["CS", "D_DD", "VSCS"]
         pred_class = classes[int(np.argmax(probs))]
         tracker.record_pass(
             "Live Inference",

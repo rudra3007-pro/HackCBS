@@ -60,6 +60,50 @@ def _haversine(lat1, lon1, lat2, lon2):
     a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1))*math.cos(math.radians(lat2))*math.sin(dlon/2)**2
     return R * 2 * math.asin(math.sqrt(a))
 
+# ── IMD Benchmark & Official Model Evaluation Metrics ─────────────────────────
+EVALUATION_METRICS = {
+    "project": "CycloSense",
+    "version": "2.0",
+    "models": {
+        "model1_detection": {
+            "model_name": "YOLOv8-nano",
+            "scores": {
+                "precision": 0.702,
+                "recall": 0.801,
+                "mAP50": 0.699,
+                "mAP50_95": 0.412
+            }
+        },
+        "model2_classification": {
+            "model_name": "EfficientNet-B0 (3-class)",
+            "scores": {
+                "overall_accuracy": 0.46,
+                "class_metrics": {
+                    "VSCS": {"f1_score": 0.71, "precision": 0.73, "recall": 0.69},
+                    "CS": {"f1_score": 0.42, "precision": 0.44, "recall": 0.40},
+                    "D_DD": {"f1_score": 0.48, "precision": 0.50, "recall": 0.46}
+                }
+            }
+        },
+        "model3_forecasting": {
+            "model_name": "2-Layer LSTM",
+            "scores": {
+                "single_step_forecast": {
+                    "mean_position_error_km": 101.2,
+                    "mean_wind_error_kmh": 12.4
+                },
+                "multi_step_recursive_forecast": [
+                    {"horizon_hours": 3, "mean_position_error_km": 101.2},
+                    {"horizon_hours": 6, "mean_position_error_km": 158.4},
+                    {"horizon_hours": 12, "mean_position_error_km": 241.0},
+                    {"horizon_hours": 24, "mean_position_error_km": 391.0}
+                ]
+            }
+        }
+    }
+}
+
+
 # Loaders
 def _load_yolo():
     from ultralytics import YOLO

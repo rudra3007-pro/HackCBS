@@ -11,6 +11,7 @@ POST /api/ai/ask      – Decision assistant query grounded in cyclone telemetry
 import os
 import logging
 from flask import Blueprint, request, jsonify
+from app.utils.rate_limiter import rate_limit
 
 logger = logging.getLogger(__name__)
 ai_bp = Blueprint("ai", __name__, url_prefix="/api/ai")
@@ -19,14 +20,11 @@ DEFAULT_MODEL = "qwen/qwen3.8-27b"
 FALLBACK_MODEL = "openai/gpt-oss-120b"
 
 
-def _get_api_key(client_provided_key: str = None) -> str:
-    """Retrieve Groq API key from environment or backend/.env file."""
-    if client_provided_key and client_provided_key.strip():
-        return client_provided_key.strip()
-
+def _get_api_key() -> str:
+    """Retrieve Groq API key strictly from server environment or backend/.env file."""
     # Check environment variable
     key = os.environ.get("GROQ_API_KEY", "").strip()
-    if key:
+    if key and key != "your_groq_api_key_here":
         return key
 
     # Absolute path to backend directory (ai.py -> routes -> app -> backend)
@@ -49,7 +47,7 @@ def _get_api_key(client_provided_key: str = None) -> str:
                         line = line.strip()
                         if line.startswith("GROQ_API_KEY="):
                             val = line.split("=", 1)[1].strip().strip('"').strip("'")
-                            if val:
+                            if val and val != "your_groq_api_key_here":
                                 return val
             except Exception:
                 pass
@@ -155,6 +153,7 @@ def ai_status():
 
 
 @ai_bp.post("/ask")
+@rate_limit(max_per_minute=20)
 def ask_ai():
     """
     Query the AI Action Planner / Cyclone Assistant.
@@ -182,11 +181,10 @@ def ask_ai():
     user_msg = data.get("message", "").strip()
     role = data.get("role", "general")
     context = data.get("context", {})
-    client_key = data.get("api_key", "")
     model_name = data.get("model", DEFAULT_MODEL)
     history = data.get("conversation_history", [])
 
-    api_key = _get_api_key(client_key)
+    api_key = _get_api_key()
     if not api_key:
         return jsonify({
             "error": "Groq API key not configured.",
@@ -268,6 +266,7 @@ def ask_ai():
 
 
 @ai_bp.post("/scan-room")
+@rate_limit(max_per_minute=20)
 def scan_room():
     """
     Evaluate room safety during a tropical cyclone based on detected objects,
@@ -279,7 +278,6 @@ def scan_room():
     room_type = body.get("room_type", "General Room")
     cyclone_category = body.get("category", "VSCS")
     wind_speed = body.get("wind_speed", "120-150 km/h")
-    client_api_key = body.get("api_key", "").strip()
 
     # Rule-based safety score or frontend real-time calculated score
     score = body.get("room_safety_score")
@@ -304,7 +302,7 @@ def scan_room():
         safety_status = "CRITICAL_HAZARD"
         status_label = "High Hazard Room — Relocate Immediately"
 
-    api_key = _get_api_key(client_api_key)
+    api_key = _get_api_key()
 
     # If Groq API key is available, generate dynamic expert advice
     ai_guidance = None

@@ -4,10 +4,24 @@ Shared transforms for Model 1 (YOLO) and Model 2 (EfficientNet).
 """
 
 import io
+import os
 import numpy as np
 from PIL import Image
 import torch
 import torchvision.transforms as T
+
+# Protect against decompression bomb attacks
+Image.MAX_IMAGE_PIXELS = 50_000_000
+
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+
+
+def is_allowed_image_filename(filename: str) -> bool:
+    """Check if file has an allowed image extension."""
+    if not filename:
+        return True
+    _, ext = os.path.splitext(filename.lower())
+    return ext in ALLOWED_IMAGE_EXTENSIONS
 
 # ── EfficientNet input transform (matches training augmentation) ──────────────
 CLASSIFY_TRANSFORM = T.Compose([

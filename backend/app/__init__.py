@@ -4,7 +4,7 @@ CycloSense — Flask Application Factory
 
 import os
 import logging
-from flask import Flask, send_from_directory, jsonify
+from flask import Flask, send_from_directory, jsonify, request
 from flask_cors import CORS
 try:
     from dotenv import load_dotenv
@@ -30,8 +30,24 @@ def create_app():
     )
     logger = logging.getLogger(__name__)
 
-    # ── CORS (allow requests from any origin) ─────────────────────────────────
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    # ── Security & Limits Configuration ───────────────────────────────────────
+    app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB maximum payload limit
+
+    @app.errorhandler(413)
+    def request_entity_too_large(error):
+        return jsonify({
+            "error": "Payload too large. Maximum allowed file upload size is 16 MB.",
+            "status": 413
+        }), 413
+
+    # ── CORS (Environment-controlled origins) ─────────────────────────────────
+    allowed_origins_env = os.environ.get("ALLOWED_ORIGINS", "*").strip()
+    if allowed_origins_env == "*" or not allowed_origins_env:
+        origins = "*"
+    else:
+        origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()]
+
+    CORS(app, resources={r"/api/*": {"origins": origins}})
 
     # ── Models configured for on-demand lazy loading (Render 512MB RAM safe) ──
     logger.info("CycloSense models ready for on-demand lazy loading.")
@@ -50,10 +66,15 @@ def create_app():
 
     @app.get("/")
     def serve_landing():
+        accept = request.headers.get("Accept", "")
+        # If client explicitly requests JSON or doesn't accept HTML (e.g. API clients, curl, test suites)
+        if "text/html" not in accept and (accept == "*/*" or "application/json" in accept or not accept):
+            return api_root()
+
         landing_path = os.path.join(frontend_dir, "pages", "landing.html")
         if os.path.exists(landing_path):
             return send_from_directory(os.path.join(frontend_dir, "pages"), "landing.html")
-        return jsonify({"service": "CycloSense API", "status": "active"}), 200
+        return api_root()
 
     @app.get("/dashboard")
     @app.get("/index.html")

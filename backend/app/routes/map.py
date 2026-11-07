@@ -588,3 +588,45 @@ def find_nearest_shelters():
             "features": features
         }
     }), 200
+
+
+# ── Server-side Nominatim Geocoding Proxy (Compliant with OSM Policy) ────────
+_geocode_cache = {}
+
+@map_bp.get("/geocode")
+def geocode():
+    """
+    Server-side proxy for Nominatim geocoding.
+    Complies with Nominatim usage policy:
+      - Sets explicit identifying User-Agent
+      - Limits results and caches responses in memory
+    """
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"error": "Missing query parameter 'q'."}), 400
+
+    cache_key = query.lower()
+    if cache_key in _geocode_cache:
+        return jsonify(_geocode_cache[cache_key]), 200
+
+    try:
+        import requests
+        url = "https://nominatim.openstreetmap.org/search"
+        headers = {
+            "User-Agent": "CycloSense/2.0 (contact@cyclosense.org)"
+        }
+        params = {
+            "format": "json",
+            "q": query,
+            "limit": 1
+        }
+        resp = requests.get(url, headers=headers, params=params, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            if len(_geocode_cache) < 500:
+                _geocode_cache[cache_key] = data
+            return jsonify(data), 200
+        return jsonify({"error": "Geocoding service error"}), resp.status_code
+    except Exception as e:
+        logger.warning("Geocoding lookup failed: %s", e)
+        return jsonify({"error": "Geocoding request failed"}), 500

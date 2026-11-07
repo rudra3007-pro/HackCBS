@@ -23,11 +23,12 @@ from PIL import Image, ImageDraw, ImageFont
 from flask import Blueprint, request, jsonify
 
 from app.services.model_loader import (
-    get_model1, get_model2, get_model3, CLASSES, LSTM_SEQ_LEN
+    get_model1, get_model2, get_model3, CLASSES, LSTM_SEQ_LEN, inference_lock
 )
 from app.utils.image_utils import (
-    bytes_to_pil, pil_to_tensor, crop_from_bbox, bbox_to_geocentre
+    bytes_to_pil, pil_to_tensor, crop_from_bbox, bbox_to_geocentre, is_allowed_image_filename
 )
+from app.utils.rate_limiter import rate_limit
 
 logger = logging.getLogger(__name__)
 predict_bp = Blueprint("predict", __name__, url_prefix="/api/predict")
@@ -50,8 +51,9 @@ def _run_detection(img, basin: str = "bay_of_bengal"):
           "geo_centre": {"lat": float, "lon": float}
         }
     """
-    model1 = get_model1()
-    results = model1(img, verbose=False)[0]
+    with inference_lock:
+        model1 = get_model1()
+        results = model1(img, verbose=False)[0]
 
     detections = []
     if results.boxes is None or len(results.boxes) == 0:
@@ -137,12 +139,12 @@ def _run_classification(img):
           "confidence":   float         # probability of predicted class
         }
     """
-    model2 = get_model2()
-    tensor = pil_to_tensor(img).to(DEVICE)
-
-    with torch.no_grad():
-        logits = model2(tensor)                        # (1, 5)
-        probs  = torch.softmax(logits, dim=1)[0]       # (5,)
+    with inference_lock:
+        model2 = get_model2()
+        tensor = pil_to_tensor(img).to(DEVICE)
+        with torch.no_grad():
+            logits = model2(tensor)                        # (1, 5)
+            probs  = torch.softmax(logits, dim=1)[0]       # (5,)
 
     pred_idx  = int(probs.argmax())
     pred_class = CLASSES[pred_idx]
@@ -179,41 +181,42 @@ def _run_forecast(track_sequence: list):
           "all_steps": [ ... ]   # all 8 recursive steps
         }
     """
-    model3, scaler = get_model3()
+    with inference_lock:
+        model3, scaler = get_model3()
 
-    # Build (8, 3) numpy array
-    seq_np = np.array(
-        [[p["lat"], p["lon"], p["wind_speed"]] for p in track_sequence],
-        dtype=np.float32,
-    )  # (8, 3)
+        # Build (8, 3) numpy array
+        seq_np = np.array(
+            [[p["lat"], p["lon"], p["wind_speed"]] for p in track_sequence],
+            dtype=np.float32,
+        )  # (8, 3)
 
-    # Normalise with the training scaler
-    seq_scaled = scaler.transform(seq_np)           # (8, 3)
+        # Normalise with the training scaler
+        seq_scaled = scaler.transform(seq_np)           # (8, 3)
 
-    # Recursive multi-step forecast: 8 steps = +3h … +24h
-    current_seq = seq_scaled.copy()                 # (8, 3)
-    all_steps   = []
+        # Recursive multi-step forecast: 8 steps = +3h … +24h
+        current_seq = seq_scaled.copy()                 # (8, 3)
+        all_steps   = []
 
-    with torch.no_grad():
-        for step in range(1, 9):
-            inp    = torch.tensor(current_seq, dtype=torch.float32).unsqueeze(0).to(DEVICE)  # (1, 8, 3)
-            out    = model3(inp)                                  # (1, 3) — normalised
-            pred_n = out[0].cpu().numpy()                         # (3,)
+        with torch.no_grad():
+            for step in range(1, 9):
+                inp    = torch.tensor(current_seq, dtype=torch.float32).unsqueeze(0).to(DEVICE)  # (1, 8, 3)
+                out    = model3(inp)                                  # (1, 3) — normalised
+                pred_n = out[0].cpu().numpy()                         # (3,)
 
-            # Inverse-transform to real-world units
-            pred_real = scaler.inverse_transform(pred_n.reshape(1, -1))[0]  # (3,)
-            lat, lon, wind = float(pred_real[0]), float(pred_real[1]), float(pred_real[2])
+                # Inverse-transform to real-world units
+                pred_real = scaler.inverse_transform(pred_n.reshape(1, -1))[0]  # (3,)
+                lat, lon, wind = float(pred_real[0]), float(pred_real[1]), float(pred_real[2])
 
-            all_steps.append({
-                "step":       step,
-                "hours":      step * 3,
-                "lat":        round(lat, 4),
-                "lon":        round(lon, 4),
-                "wind_speed": round(max(wind, 0.0), 2),   # clip negative wind
-            })
+                all_steps.append({
+                    "step":       step,
+                    "hours":      step * 3,
+                    "lat":        round(lat, 4),
+                    "lon":        round(lon, 4),
+                    "wind_speed": round(max(wind, 0.0), 2),   # clip negative wind
+                })
 
-            # Slide the window: drop oldest, append new prediction
-            current_seq = np.vstack([current_seq[1:], pred_n])
+                # Slide the window: drop oldest, append new prediction
+                current_seq = np.vstack([current_seq[1:], pred_n])
 
     # Key horizons only
     key_steps = [s for s in all_steps if s["step"] in {1, 2, 4, 8}]
@@ -236,6 +239,7 @@ def health():
         "status": "ok",
         "service": "CycloSense Prediction API",
         "models_status": status,
+        "models_loaded": status.get("all_loaded", False),
         "ready": True
     }), 200
 
@@ -342,6 +346,7 @@ def test_models():
 # ── Route 1: Detection ────────────────────────────────────────────────────────
 
 @predict_bp.post("/detect")
+@rate_limit(max_per_minute=60)
 def detect():
     """
     Detect cyclones in a satellite image.
@@ -365,8 +370,12 @@ def detect():
     if "image" not in request.files:
         return jsonify({"error": "No image file provided. Send as 'image' field."}), 400
 
+    image_file = request.files["image"]
+    if not is_allowed_image_filename(image_file.filename):
+        return jsonify({"error": "Invalid file format. Allowed formats: PNG, JPG, JPEG, WEBP."}), 400
+
     basin = request.form.get("basin", request.args.get("basin", "bay_of_bengal"))
-    img_bytes = request.files["image"].read()
+    img_bytes = image_file.read()
     try:
         img              = bytes_to_pil(img_bytes)
         detections, yolo_results = _run_detection(img, basin=basin)
@@ -386,6 +395,7 @@ def detect():
 # ── Route 2: Classification ───────────────────────────────────────────────────
 
 @predict_bp.post("/classify")
+@rate_limit(max_per_minute=60)
 def classify():
     """
     Classify the intensity category of a cropped cyclone image.
@@ -404,7 +414,11 @@ def classify():
     if "image" not in request.files:
         return jsonify({"error": "No image file provided. Send as 'image' field."}), 400
 
-    img_bytes = request.files["image"].read()
+    image_file = request.files["image"]
+    if not is_allowed_image_filename(image_file.filename):
+        return jsonify({"error": "Invalid file format. Allowed formats: PNG, JPG, JPEG, WEBP."}), 400
+
+    img_bytes = image_file.read()
     try:
         img    = bytes_to_pil(img_bytes)
         result = _run_classification(img)
@@ -418,6 +432,7 @@ def classify():
 # ── Route 3: Forecast ─────────────────────────────────────────────────────────
 
 @predict_bp.post("/forecast")
+@rate_limit(max_per_minute=60)
 def forecast():
     """
     Forecast future cyclone track and intensity.
@@ -471,6 +486,7 @@ def forecast():
 # ── Route 4: Full Pipeline ────────────────────────────────────────────────────
 
 @predict_bp.post("/full")
+@rate_limit(max_per_minute=30)
 def full_pipeline():
     """
     Run the complete 3-model pipeline on a satellite image + track history.
@@ -494,7 +510,11 @@ def full_pipeline():
     if "track" not in request.form:
         return jsonify({"error": "Missing 'track' JSON string in form data."}), 400
 
-    img_bytes = request.files["image"].read()
+    image_file = request.files["image"]
+    if not is_allowed_image_filename(image_file.filename):
+        return jsonify({"error": "Invalid file format. Allowed formats: PNG, JPG, JPEG, WEBP."}), 400
+
+    img_bytes = image_file.read()
     try:
         track = json.loads(request.form["track"])
     except Exception:

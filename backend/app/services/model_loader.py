@@ -49,6 +49,7 @@ _scaler = None   # sklearn StandardScaler
 _lock1 = threading.Lock()
 _lock2 = threading.Lock()
 _lock3 = threading.Lock()
+inference_lock = threading.Lock()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -106,7 +107,7 @@ def get_model2() -> torch.nn.Module:
                     torch.nn.Dropout(p=0.4, inplace=True),
                     torch.nn.Linear(in_features, NUM_CLASSES),
                 )
-                state = torch.load(path, map_location=device, weights_only=False)
+                state = torch.load(path, map_location=device, weights_only=True)
                 if isinstance(state, dict) and "model_state_dict" in state:
                     state = state["model_state_dict"]
                 model.load_state_dict(state)
@@ -134,7 +135,7 @@ def get_model3():
                     num_layers=LSTM_NUM_LAYERS,
                     output_size=LSTM_OUTPUT_SIZE,
                 )
-                state = torch.load(m3_path, map_location=device, weights_only=False)
+                state = torch.load(m3_path, map_location=device, weights_only=True)
                 if isinstance(state, dict) and "model_state_dict" in state:
                     state = state["model_state_dict"]
                 model.load_state_dict(state)
@@ -142,6 +143,8 @@ def get_model3():
                 model.eval()
 
                 logger.info("Loading scaler from %s", sc_path)
+                if not os.path.isfile(sc_path):
+                    raise FileNotFoundError(f"Scaler file not found at {sc_path}")
                 with open(sc_path, "rb") as f:
                     scaler = pickle.load(f)
 

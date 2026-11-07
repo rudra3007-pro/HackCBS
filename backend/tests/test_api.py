@@ -29,7 +29,7 @@ errors = []
 
 def check(label, resp, expected_status=200, check_keys=None):
     ok = resp.status_code == expected_status
-    data = resp.get_json()
+    data = resp.get_json(silent=True) or {}
     if check_keys:
         for k in check_keys:
             if k not in data:
